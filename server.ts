@@ -1,11 +1,13 @@
 import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { z } from "zod";
+import { z, type ZodRawShape } from "zod";
 import fg from "fast-glob";
 import fs from "node:fs/promises";
 import fssync from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
+
 
 const REPO_ROOT = process.env.REPO_ROOT || "";
 const AUTH_TOKEN = process.env.AUTH_TOKEN || "";
@@ -46,6 +48,26 @@ const DENY_GLOBS = [
   "**/*.ico",
 ];
 const DENY_FILES = [/^\.env/i];
+
+const TreeInputShape = {
+    depth: z.number().int().min(1).max(5).default(2),
+    includeHidden: z.boolean().default(false),
+} satisfies ZodRawShape;
+const TreeInput = z.object(TreeInputShape);
+
+const ReadInputShape = {
+    path: z.string(),
+    startLine: z.number().int().min(1).optional(),
+    endLine: z.number().int().min(1).optional(),
+} satisfies ZodRawShape;
+const ReadInput = z.object(ReadInputShape);
+
+const SearchInputShape = {
+    query: z.string(),
+    glob: z.string().default("**/*.{ts,tsx,js,jsx,md,json,css,scss,py,go}"),
+    maxMatches: z.number().int().min(1).max(200).default(50),
+} satisfies ZodRawShape;
+const SearchInput = z.object(SearchInputShape);
 
 function resolveInRepo(userPath: string): string {
   const abs = path.resolve(REPO_ROOT, userPath);
@@ -88,10 +110,7 @@ server.registerTool(
     title: "List repository structure",
     description:
       "Returns a depth-limited directory tree from the repo root. Skips large/binary folders.",
-    inputSchema: z.object({
-      depth: z.number().int().min(1).max(5).default(2),
-      includeHidden: z.boolean().default(false),
-    }),
+    inputSchema: TreeInputShape,
   },
   async ({ depth, includeHidden }) => {
     const patterns = ["**/*"];
@@ -132,13 +151,10 @@ server.registerTool(
     title: "Read a text file",
     description:
       "Read a UTF-8 text file within the repo. Supports line slicing and size caps.",
-    inputSchema: z.object({
-      path: z.string(),
-      startLine: z.number().int().min(1).optional(),
-      endLine: z.number().int().min(1).optional(),
-    }),
+    inputSchema: ReadInputShape,
   },
-  async ({ path: relPath, startLine, endLine }) => {
+  async (args) => {
+    const { path:relPath, startLine, endLine } = ReadInput.parse(args);
     const abs = resolveInRepo(relPath);
     if (denyByName(abs)) throw new Error("Access to this file is denied.");
 
@@ -160,13 +176,10 @@ server.registerTool(
     title: "Regex search across files",
     description:
       "Search repo for a regex within files matched by a glob. Returns capped matches with line numbers.",
-    inputSchema: z.object({
-      query: z.string(), // JS regex (without flags) we’ll use with 'gmi'
-      glob: z.string().default("**/*.{ts,tsx,js,jsx,md,json,css,scss,py,go}"),
-      maxMatches: z.number().int().min(1).max(MAX_SEARCH_MATCHES).default(50),
-    }),
+    inputSchema: SearchInputShape,
   },
-  async ({ query, glob, maxMatches }) => {
+  async (args) => {
+    const { query, glob, maxMatches } = SearchInput.parse(args);
     const files = await fg(glob, {
       cwd: REPO_ROOT,
       onlyFiles: true,
@@ -193,12 +206,12 @@ server.registerTool(
       const text = await fs.readFile(abs, "utf8");
       const lines = text.split(/\r?\n/);
       for (let i = 0; i < lines.length; i++) {
-        if (rx.test(lines[i])) {
-          results.push({ path: rel, line: i + 1, preview: lines[i].trim() });
+        const line = lines[i];
+        if (line && rx.test(line)) {
+          results.push({ path: rel, line: i + 1, preview: line.trim() });
           if (results.length >= maxMatches) break;
         }
       }
-      if (results.length >= maxMatches) break;
     }
 
     return {
@@ -235,6 +248,7 @@ app.use((req, res, next) => {
 
 app.post("/mcp", async (req, res) => {
   const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => randomUUID(),
     enableJsonResponse: true,
   });
   res.on("close", () => transport.close());
