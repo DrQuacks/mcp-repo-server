@@ -1,4 +1,5 @@
 import express from "express";
+import type { Request, Response, NextFunction } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z, type ZodRawShape } from "zod";
@@ -12,7 +13,7 @@ import 'dotenv/config';
 
 const REPO_ROOT = process.env.REPO_ROOT || "";
 const AUTH_TOKEN = process.env.AUTH_TOKEN || "";
-const PORT = parseInt(process.env.PORT || "3000", 10);
+const PORT = parseInt(process.env.PORT || "2091", 10);
 
 // ---- guards ----
 if (!REPO_ROOT) {
@@ -237,17 +238,16 @@ server.registerTool(
 const app = express();
 app.use(express.json());
 
-// simple bearer auth
-app.use((req, res, next) => {
-  if (!AUTH_TOKEN) return next();
-  const auth = req.header("authorization") || "";
-  if (auth !== `Bearer ${AUTH_TOKEN}`) {
-    return res.status(401).json({ error: "Unauthorized" });
+function requireAuth(req:Request, res:Response, next:NextFunction) {
+    if (!AUTH_TOKEN) return next(); // skip if no token set
+    const auth = req.header("authorization") || "";
+    if (auth !== `Bearer ${AUTH_TOKEN}`) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    next();
   }
-  next();
-});
 
-app.post("/mcp", async (req, res) => {
+app.post("/mcp", requireAuth, async (req, res) => {
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: () => randomUUID(),
     enableJsonResponse: true,
