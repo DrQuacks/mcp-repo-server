@@ -51,3 +51,5 @@ temp/
 # Optional: ignore repo you’re exposing
 # Replace with your actual repo path if nested inside this project
 # /your-repo-folder-name/
+
+.mcp_session
