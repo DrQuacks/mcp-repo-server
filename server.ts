@@ -238,6 +238,17 @@ server.registerTool(
 const app = express();
 app.use(express.json());
 
+ // Debug: log incoming session id and method
+ app.use((req, _res, next) => {
+   if (req.path === "/mcp" && req.method === "POST") {
+     const sid = req.get("mcp-session-id");
+     const body = (req as any).body && typeof (req as any).body === "object" ? (req as any).body : undefined;
+     const method = (body && (Array.isArray(body) ? body[0]?.method : body.method)) || "unknown";
+     console.log(`[mcp] -> ${method}  sid=${sid ?? "(none)"}`);
+   }
+   next();
+ });
+
 function requireAuth(req:Request, res:Response, next:NextFunction) {
     if (!AUTH_TOKEN) return next(); // skip if no token set
     const auth = req.header("authorization") || "";
@@ -254,6 +265,7 @@ app.post("/mcp", requireAuth, async (req, res) => {
   });
   res.on("close", () => transport.close());
   await server.connect(transport);
+  console.log("[mcp] transport ready");
   await transport.handleRequest(req, res, req.body);
 });
 

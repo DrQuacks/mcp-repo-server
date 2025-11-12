@@ -48,17 +48,29 @@ async function init() {
 
   await saveSession(sessionId);
 
-  // notifications/initialized (JSON-RPC notification; no id)
-  const res2 = await fetch(BASE_URL, {
-    method: "POST",
-    headers: { ...baseHeaders, "Mcp-Session-Id": sessionId },
-    body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
-  });
+    // Small delay to avoid race right after initialize
+    await new Promise(r => setTimeout(r, 120));
 
-  if (!res2.ok) {
-    const t = await res2.text();
-    throw new Error(`initialized notification failed: ${res2.status} ${res2.statusText} — ${t}`);
-  }
+    // Try "initialized" first, then fallback to "notifications/initialized"
+    const sendInit = async (method: "initialized" | "notifications/initialized") => {
+    const r = await fetch(BASE_URL, {
+        method: "POST",
+        headers: { ...baseHeaders, "Mcp-Session-Id": sessionId },
+        body: JSON.stringify({ jsonrpc: "2.0", method }),
+    });
+    return r;
+    };
+
+    let res2 = await sendInit("initialized");
+    if (!res2.ok) {
+    const msg = await res2.text();
+    // Only retry on "not initialized" flavor errors; otherwise bubble up
+    if (res2.status === 400 && /not initialized/i.test(msg)) {
+        res2 = await sendInit("notifications/initialized");
+    } else {
+        throw new Error(`initialized notification failed: ${res2.status} ${res2.statusText} — ${msg}`);
+    }
+    }
 
   console.log(`SESSION=${sessionId}`);
 }
